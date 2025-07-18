@@ -123,7 +123,7 @@ def main(port: int, isDev: bool, auth: bool) -> int:
         crt_file_path = "/app/tmp/crt.pem"
         write_ra_tls_key_and_crt(key_file_path, crt_file_path, format="pem")
 
-    app = Server("attestable-mcp-server")
+    app = Server("gdrive-mcp-server")
 
     @app.call_tool()
     async def gdrive_tool(
