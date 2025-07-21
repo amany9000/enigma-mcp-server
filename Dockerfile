@@ -12,4 +12,4 @@ RUN pip install -r requirements.txt
 
 ENTRYPOINT []
 
-CMD ["python", "/app/src/attestable_mcp_server/__main__.py"]
+CMD ["python", "-m", "src.gdrive_mcp_server", "--isDev"]

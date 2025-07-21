@@ -25,33 +25,41 @@ A Confidential MCP Server implementation running on [Gramine](https://github.com
 6. Download the JSON file of your client's OAuth keys
 7. Rename the key file to `credentials.json` and place into the root of this repo.
 
+## Initial Setup
+Setup Venv:
+```
+python -m venv .venv
+source .venv/bin/activate
+```
+Install Deps:
+```
+pip install -r requirements.txt
+```
 
-### Authentication
+## Authentication
 To authenticate and save credentials:
 
-1. Run: `uv run python src/gdrive_mcp_server/server.py --isDev  --auth`
+1. Run: `python -m src.gdrive_mcp_server --isDev --auth `
 2. This will open an authentication flow in your system browser
 3. Complete the authentication process
 4. Credentials will be saved in the root of this repo (i.e. `./token.json`)
 
 ## Local Development
 ```
-uv sync
-uv run python src/gdrive_mcp_server/server.py --isDev  
+python -m src.gdrive_mcp_server --isDev 
 ```
 
 ## Production
 
 ```
-uv sync
 docker build -t confidential-mcp-server .
 gramine-sgx-gen-private-key
 git clone https://github.com/gramineproject/gsc docker/gsc
 cd docker/gsc
-uv run ./gsc build-gramine --rm --no-cache -c ../gramine_base.config.yaml gramine_base
-uv run ./gsc build -c ../confidential-mcp-server.config.yaml --rm confidential-mcp-server ../confidential-mcp-server.manifest
-uv run ./gsc sign-image -c ../confidential-mcp-server.config.yaml  confidential-mcp-server "$HOME"/.config/gramine/enclave-key.pem
-uv run ./gsc info-image gsc-confidential-mcp-server
+./gsc build-gramine --rm --no-cache -c ../gramine_base.config.yaml gramine_base
+./gsc build -c ../confidential-mcp-server.config.yaml --rm confidential-mcp-server ../confidential-mcp-server.manifest
+./gsc sign-image -c ../confidential-mcp-server.config.yaml  confidential-mcp-server "$HOME"/.config/gramine/enclave-key.pem
+./gsc info-image gsc-confidential-mcp-server
 ```
 
 Note: Build gramine_base only once.

@@ -1,2 +1,2 @@
 def main() -> None:
-    print("Hello from attestable-mcp-server!")
+    print("Hello from gdrive-mcp-server!")
