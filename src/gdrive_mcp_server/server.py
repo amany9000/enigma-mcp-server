@@ -2,6 +2,7 @@ import contextlib
 from collections.abc import AsyncIterator
 import os, io
 import click
+
 import httpx
 import uvicorn
 import mcp.types as types
@@ -11,12 +12,10 @@ from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 from starlette.responses import PlainTextResponse
 from starlette.types import Receive, Scope, Send
-
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-
 from gramine_ratls.attest import write_ra_tls_key_and_crt
 
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']

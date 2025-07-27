@@ -1,4 +1,4 @@
-FROM python:3.11-bullsey
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 # Install the project into `/app`
 WORKDIR /app
@@ -6,7 +6,7 @@ WORKDIR /app
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
 ADD . /app
-RUN pip install -r requirements.txt 
+RUN pip install .
 
 # Place executables in the environment at the front of the path
 
