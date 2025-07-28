@@ -33,7 +33,7 @@ source .venv/bin/activate
 ```
 Install Deps:
 ```
-pip install -r requirements.txt
+pip install .[dev]
 ```
 
 ## Authentication
@@ -50,30 +50,39 @@ python -m src.gdrive_mcp_server --isDev
 ```
 
 ## Production
+First clone gsc:
+```
+git clone https://github.com/gramineproject/gsc docker/gsc
+```
+Then generate enclave private key:
+```
+gramine-sgx-gen-private-key
+```
+Build gramine base (just once):
+```
+./gsc build-gramine --rm --no-cache -c ../gramine_base.config.yaml gramine_base
+```
 
+### Image building, graminisation and signing
 ```
 docker build -t confidential-mcp-server .
-gramine-sgx-gen-private-key
-git clone https://github.com/gramineproject/gsc docker/gsc
 cd docker/gsc
-./gsc build-gramine --rm --no-cache -c ../gramine_base.config.yaml gramine_base
 ./gsc build -c ../confidential-mcp-server.config.yaml --rm confidential-mcp-server ../confidential-mcp-server.manifest
 ./gsc sign-image -c ../confidential-mcp-server.config.yaml  confidential-mcp-server "$HOME"/.config/gramine/enclave-key.pem
 ./gsc info-image gsc-confidential-mcp-server
 ```
 
-Note: Build gramine_base only once.
-
-## Starting Server in Direct Mode
+### Starting Server in Direct Mode
 ```
-docker run -it --rm \
-  --security-opt seccomp=unconfined \
-  --cap-add=SYS_PTRACE \
-  --cap-add=SYS_ADMIN \
-  -e GRAMINE_MODE=direct \
+docker run -p 8000:8000 --rm --env GRAMINE_MODE=direct \
+  --security-opt seccomp=seccomp.json \
   gsc-confidential-mcp-server
 ```
 
+The repetetive steps from above after building gramine_base and present in steps.sh and can be executed using:
+```
+bash steps.sh
+```
 
 ## Starting Server on Secure Hardware
 ```
