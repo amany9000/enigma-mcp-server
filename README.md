@@ -1,4 +1,4 @@
-# ➡️ enigma-mcp-server
+# ➡️ Enigma-mcp-server
 <div align="center">
 
 <strong>Enigma MCP server</strong>
