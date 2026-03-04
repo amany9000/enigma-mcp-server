@@ -111,7 +111,6 @@ async def handle_mcp_request(scope, receive, send):
                 {"error": "Unauthorized"}, 
                 status_code=401,
                 headers={
-                    # "WWW-Authenticate": 'Bearer resource_metadata="https://hyperangelic-kathyrn-inflatedly.ngrok-free.dev/.well-known/oauth-protected-resource"'
                     "WWW-Authenticate": f'Bearer resource_metadata="https://{config.DEPLOYED_HOST}/.well-known/oauth-protected-resource"'
                 }
             )
@@ -138,7 +137,7 @@ async def handle_mcp_auth_challenge(scope, receive, send):
         await response(scope, receive, send)
         return
 
-    # Valid token found? Hand off to the MCP logic
+    # Checking Valid token found? Hand off to the MCP logic
     await handle_mcp_request(scope, receive, send)
 
 async def oauth_protected_resource(request):
@@ -151,7 +150,7 @@ async def oauth_protected_resource(request):
 
 async def oauth_authorization_server(request):
     logger.debug("oauth_authorization_server called, proxying Google's OIDC config")
-    # You can simply proxy Google's standard OIDC config
+    # We can simply proxy Google's standard OIDC config
     import httpx
     async with httpx.AsyncClient() as client:
         resp = await client.get("https://accounts.google.com/.well-known/openid-configuration")
@@ -176,7 +175,6 @@ starlette_app = Starlette(
 )
 
 if __name__ == "__main__":
-    # Ensure key.pem and cert.pem are in your directory for HTTPS
     logger.info("Starting gdrive-mcp-server on %s:%d", config.HOST, config.PORT)
     uvicorn.run(
         starlette_app, 
