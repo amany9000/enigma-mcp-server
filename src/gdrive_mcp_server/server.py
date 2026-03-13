@@ -1,212 +1,184 @@
-import contextlib
-from collections.abc import AsyncIterator
-import os, io
-import click
-
-import httpx
-import uvicorn
+import contextlib, uvicorn
+import os
+import logging
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
+from starlette.responses import JSONResponse
 import mcp.types as types
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from starlette.applications import Starlette
-from starlette.routing import Mount, Route
-from starlette.responses import PlainTextResponse
-from starlette.types import Receive, Scope, Send
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-from gramine_ratls.attest import write_ra_tls_key_and_crt
 
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+# configure logging
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
-def get_drive_service():
-    creds = None
-    # token.json stores the user's access and refresh tokens
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+from .config import config
+from .tools import search_files, read_file, drive_manager
+
+
+app = Server("gdrive-mcp-server")
+
+_current_user = None
+
+@app.list_tools()
+async def list_tools() -> list[types.Tool]:
+    return [
+        types.Tool(
+            name="search",
+            description="Searches for file with FileName in Google Drive",
+            inputSchema={
+                "type": "object",
+                "required": ["fileName"],
+                "properties": {
+                    "fileName": {
+                        "type": "string",
+                        "description": "FileName to search",
+                    }
+                },
+            },
+        ),
+        types.Tool(
+            name="read",
+            description="Read file with FileName in Google Drive",
+            inputSchema={
+                "type": "object",
+                "required": ["fileName"],
+                "properties": {
+                    "fileName": {
+                        "type": "string",
+                        "description": "FileName to read",
+                    }
+                },
+            },
+        )
+    ]
+
+
+@app.call_tool()
+async def gdrive_tool(name: str, arguments: dict) -> list:
+    if config.OAUTH_STRICT and not _current_user:
+        logger.warning("Unauthorized access attempt to gdrive_tool")
+        raise ValueError("Unauthorized: Valid Google ID Token Required")
+
+    filename = arguments.get("fileName")
+    
+    if name == "search":
+        logger.debug("Searching for : %s", filename)
+        return search_files(filename, _current_user) 
+
+    elif name == "read":
+        logger.debug("Reading file : %s", filename)
+        return read_file(filename, _current_user)
     else:
-        raise ValueError("token.json credential file not found")
-    return build('drive', 'v3', credentials=creds)
-
-def get_files(query, page_size=10):
-    service = get_drive_service()
-    results = service.files().list(
-        q=f"name contains '{query}'",
-        pageSize=page_size,
-        fields="files(id, name, mimeType, modifiedTime)"
-    ).execute()
-    items = results.get('files', [])
-    
-    return items
+        logger.error("Unknown tool call: %s", name)
+        raise ValueError(f"Unknown tool: {name}")
 
 
-def search_files(query, page_size=10):
-    files = get_files(query, page_size)
-    print('Files:')
-    final_str = ''
-    for file in files:
-        final_str = final_str + f"{file['name']}, "
-        print(f"{file['name']} (ID: {file['id']}, Type: {file['mimeType']})")
-    return [types.TextContent(
-        type="text",
-        text=f"{len(files)} file(s) found: {final_str}"
-    )]
+session_manager = StreamableHTTPSessionManager(app=app, stateless=True)
 
-def read_file(query, page_size=10):
-    files = get_files(query, page_size)
-    
-    if len(files) == 0:
-        return {'response': 'File not present'}
+async def handle_mcp_request(scope, receive, send):
+    global _current_user
 
-    if len(files) > 1:
-        return {'response': 'More than one file present'}
+    headers = dict(scope.get("headers", []))
+    auth_header = headers.get(b"authorization", b"").decode("utf-8")
     
-    file_id = files[0]['id']
-    file_name = files[0]['name']
-    mime_type = files[0]['mimeType']
+
+    token = auth_header.replace("Bearer ", "") if "Bearer" in auth_header else None
     
-    service = get_drive_service()
-    
-    if mime_type == "application/vnd.google-apps.document":
-        # Google Doc → export as plain text
-        request = service.files().export_media(fileId=file_id, mimeType="text/plain")
-    elif mime_type == "text/plain":
-        # Plain text file
-        request = service.files().get_media(fileId=file_id)
-    else:
-        print(f"Unsupported file type: {mime_type}")
+    if not token:
+        logger.warning("No token provided in request, returning 401")
+        # on First Trigger, It will Return 401 with the metadata pointer
+        # This will tells the client to look at your metadata endpoint
+        response = JSONResponse(
+            {"error": "Unauthorized"}, 
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer resource_metadata="https://{config.DEPLOYED_HOST}/.well-known/oauth-protected-resource"'
+            }
+        )
+        await response(scope, receive, send)
         return
 
-    # 📥 Download to buffer
-    buffer = io.BytesIO()
-    downloader = MediaIoBaseDownload(buffer, request)
-    done = False
-    while not done:
-        status, done = downloader.next_chunk()
-
-    buffer.seek(0)
-    content = buffer.read().decode("utf-8")
-    return [types.TextContent(
-        type="text",
-        text=f"--- Contents of {file_name} ---\n{content}\n"
-    )]
-
-
-@click.command()
-@click.option("--port", default=8000, help="Port to listen on for StreamableHTTP")
-@click.option(
-    "--isDev",
-    "isDev",
-    is_flag=True,
-    help="Is development mode on",
-)
-@click.option(
-    "--auth",
-    "auth",
-    is_flag=True,
-    help="Authenticate user for GDrive",
-)
-def main(port: int, isDev: bool, auth: bool) -> int:
-    if auth:
-        # Run local browser auth
-        flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-        creds = flow.run_local_server(port=0)
-        # Save the credentials
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-        return
-
-    if not isDev:
-        key_file_path = "/app/tmp/key.pem"
-        crt_file_path = "/app/tmp/crt.pem"
-        write_ra_tls_key_and_crt(key_file_path, crt_file_path, format="pem")
-
-    app = Server("gdrive-mcp-server")
-
-    @app.call_tool()
-    async def gdrive_tool(
-        name: str, arguments: dict
-    ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-        if "fileName" not in arguments:
-            raise ValueError("Missing required argument 'fileName'")
-        if name == "search":
-            return search_files(arguments["fileName"])
-        elif name == "read":
-            return read_file(arguments["fileName"])
-        else:
-            raise ValueError(f"Unknown tool: {name}")
-
-    @app.list_tools()
-    async def list_tools() -> list[types.Tool]:
-        return [
-            types.Tool(
-                name="search",
-                description="Searches for file with FileName in Google Drive",
-                inputSchema={
-                    "type": "object",
-                    "required": ["fileName"],
-                    "properties": {
-                        "fileName": {
-                            "type": "string",
-                            "description": "FileName to search",
-                        }
-                    },
-                },
-            ),
-            types.Tool(
-                name="read",
-                description="Read file with FileName in Google Drive",
-                inputSchema={
-                    "type": "object",
-                    "required": ["fileName"],
-                    "properties": {
-                        "fileName": {
-                            "type": "string",
-                            "description": "FileName to read",
-                        }
-                    },
-                },
+    if config.OAUTH_STRICT:
+        try:
+            _current_user = drive_manager.verify_token(token)
+            if not _current_user:
+                logger.error("Token verification failed! Token might be expired or invalid.")
+                raise ValueError("Unauthorized: Invalid or expired token")
+        except Exception as e:
+            logger.error("Error during token verification: %s", e)
+            response = JSONResponse(
+                {"error": "Unauthorized"}, 
+                status_code=401,
+                headers={
+                    "WWW-Authenticate": f'Bearer resource_metadata="https://{config.DEPLOYED_HOST}/.well-known/oauth-protected-resource"'
+                }
             )
-        ]
+            await response(scope, receive, send)
+            return
 
-    # Create the session manager with true stateless mode
-    session_manager = StreamableHTTPSessionManager(
-        app=app,
-        event_store=None,
-        json_response=True,
-        stateless=True,
-    )
+    # Call manager without the problematic kwarg
+    await session_manager.handle_request(scope, receive, send)
 
-    async def handle_streamable_http(
-        scope: Scope, receive: Receive, send: Send
-    ) -> None:
-        await session_manager.handle_request(scope, receive, send)
+async def handle_mcp_auth_challenge(scope, receive, send):
+    headers = dict(scope.get("headers", []))
+    auth = headers.get(b"authorization", b"").decode("utf-8")
+    
+    if not auth.startswith("Bearer "):
+        # This generic 401 response triggers the 'Login' popup 
+        # in VS Code, Claude, and Cursor automatically.
+        response = JSONResponse(
+            {"error": "unauthorized"},
+            status_code=401,
+            headers={
+                "WWW-Authenticate": f'Bearer resource_metadata="https://{config.DEPLOYED_HOST}/.well-known/oauth-protected-resource"'
+            }
+        )
+        await response(scope, receive, send)
+        return
 
-    @contextlib.asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
-        """Context manager for session manager."""
-        async with session_manager.run():
-            print("Application started with StreamableHTTP session manager!")
-            try:
-                yield
-            finally:
-                print("Application shutting down...")
+    # Checking Valid token found? Hand off to the MCP logic
+    await handle_mcp_request(scope, receive, send)
 
-    # Create an ASGI application using the transport
-    starlette_app = Starlette(
-        debug=True,
-        routes=[
-            Mount("/mcp", app=handle_streamable_http),
-        ],
-        lifespan=lifespan,
-    )
+async def oauth_protected_resource(request):
+    logger.debug("oauth_protected_resource called")
+    return JSONResponse({
+        "resource": f"https://{config.DEPLOYED_HOST}/mcp",
+        "authorization_servers": ["https://accounts.google.com"],
+        "scopes_supported": ["openid", "email", "https://www.googleapis.com/auth/drive.readonly", "profile"]
+    })
+
+async def oauth_authorization_server(request):
+    logger.debug("oauth_authorization_server called, proxying Google's OIDC config")
+    # We can simply proxy Google's standard OIDC config
+    import httpx
+    async with httpx.AsyncClient() as client:
+        resp = await client.get("https://accounts.google.com/.well-known/openid-configuration")
+        return JSONResponse(resp.json())
 
 
-    if isDev:
-        uvicorn.run(starlette_app, host="0.0.0.0", port=port, workers=1, reload=False)
-    else:
-        uvicorn.run(starlette_app, host="0.0.0.0", port=port, workers=1, reload=False, ssl_keyfile=key_file_path, ssl_certfile=crt_file_path)
+
+@contextlib.asynccontextmanager
+async def lifespan(app: Starlette):
+    logger.info("Starting lifespan context with session manager")
+    async with session_manager.run():
+        yield
+    logger.info("Ending lifespan context")
+
+starlette_app = Starlette(
+    routes=[
+        Route("/.well-known/oauth-protected-resource", oauth_protected_resource),
+        Route("/.well-known/oauth-authorization-server", oauth_authorization_server),
+        Mount("/mcp", app=handle_mcp_request),
+    ],
+    lifespan=lifespan
+)
 
 if __name__ == "__main__":
-    main()
+    logger.info("Starting gdrive-mcp-server on %s:%d", config.HOST, config.PORT)
+    uvicorn.run(
+        starlette_app, 
+        host=config.HOST, 
+        port=config.PORT,
+    )
+    logger.info("gdrive-mcp-server has stopped")
