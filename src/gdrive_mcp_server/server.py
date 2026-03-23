@@ -145,8 +145,15 @@ async def oauth_protected_resource(request):
     return JSONResponse({
         "resource": f"https://{config.DEPLOYED_HOST}/mcp",
         "authorization_servers": ["https://accounts.google.com"],
-        "scopes_supported": ["openid", "email", "https://www.googleapis.com/auth/drive.readonly", "profile"]
-    })
+        "client_id": config.OAUTH_CLIENT_ID,
+        "authorization_endpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_endpoint": "https://oauth2.googleapis.com/token",
+        "scopes_supported": ["openid", "email", "https://www.googleapis.com/auth/drive.readonly", "profile"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "response_types_supported": ["code"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"]
+    }
+    )
 
 async def oauth_authorization_server(request):
     logger.debug("oauth_authorization_server called, proxying Google's OIDC config")

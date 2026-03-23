@@ -11,7 +11,7 @@ from googleapiclient.http import MediaIoBaseDownload
 class GoogleDriveManager:
     
     def __init__(self, client_id: str, scope: str):
-        self.client_id = client_id    
+        self.client_id = client_id
         self.scope = [scope]
 
     def verify_token(self, token: str) -> Optional[str]:
